@@ -4,14 +4,18 @@
 <br>
 <br>
 ## ダウンロードリンク
-[最新バージョンはこちら(v.1.1.1)](https://github.com/coldleaf0124/ZenpoMod-Download/releases/tag/ZenpoMod1.1.1)
+[最新バージョンはこちら(v.1.1.2)](https://github.com/coldleaf0124/ZenpoMod/releases/tag/ZenpoMod1.1.2)
 <br>
 <br>
 ## 対応バージョン
 ### 本体
- - Minecraft 26.1.2
+ - 26.1
+ - 26.1.1
+ - 26.1.2
+ - 26.2
+ - (26.3)
 ### MODローダー
- - Neoforge 26.1.2.73
+ - Neoforge
 <br>
 <br>
 
