@@ -4,7 +4,7 @@
 <br>
 <br>
 ## ダウンロードリンク
-[最新バージョンはこちら(v.1.1.2)](https://github.com/coldleaf0124/ZenpoMod/releases/tag/ZenpoMod1.1.2)
+[ダウンロードはこちら](https://github.com/coldleaf0124/ZenpoMod/releases/)
 <br>
 <br>
 ## 対応バージョン
