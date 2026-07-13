@@ -16,6 +16,8 @@
  - (26.3)
 ### MODローダー
  - Neoforge
+ - Fabric
+ - Quilt
 <br>
 <br>
 
