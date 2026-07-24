@@ -1,1 +1,521 @@
-
+はじめに
+今回、NeoForge(一応マルチローダー対応)を使って「Zenpomod」という Mod を作りました。色々とだるかった部分とか、こ
+だわって実装した部分があったので、今後の自分のためにも開発記録として残しておきます
+Mod 制作をしている人や、「これどうやって動いてるんだ」 と気になった人の参考になれば嬉しいです
+1. ゾンビに混ざって ZENPO が 湧く仕様
+通常、新しい Mob を自然湧きさせる時って「バイオームのスポーン設定」を追加するのが普通だと思ったけど今回はあえて
+「既存のゾンビのスポーン処理を乗っ取る」という方法を使いました。
+夜、ゾンビだと思って油断して近づいたら、10%の確率でいきなり敵 MOB の EntityZenpo にすり替わってスポーンするとい
+う仕様です
+まあ見た目全然違うから気付けるはずです笑
+〜どうやって実装したか〜
+NeoForge の EntityJoinLevelEvent を使って、Mob がワールドにスポーンする直前のタイミングを狙い撃ちしました
+java
+// ゾンビが湧こうとしたら、10%の確率で EntityZenpo にすり替える処理
+private void onEntityJoinLevel(net.neoforged.neoforge.event.entity.EntityJoinLevelEvent event) {
+Entity entity = event.getEntity();
+// スポーンしようとしてるのがゾンビ系だった場合
+if (!(entity instanceof WaterMonsterEntity) && isZombieType(entity.getType())) {
+// サーバー側で 10%を引く
+if (!event.getLevel().isClientSide() && event.getLevel().getRandom().nextFloat() < 0.10F) {
+net.minecraft.world.entity.monster.Monster oldEntity = (net.minecraft.world.entity.monster.Monster) entity;
+// Zenpo を召喚して、元のゾンビの座標と体の向きを丸写しさせる
+WaterMonsterEntity entityzenpo = new WaterMonsterEntity(ENTITYZENPO.get(), oldEntity.level());
+entityzenpo.copyPosition(oldEntity);
+entityzenpo.setYRot(oldEntity.getYRot());
+entityzenpo.setXRot(oldEntity.getXRot());
+// 元のゾンビを昇天させて、Zenpo をワールドに召喚
+oldEntity.discard();
+event.getLevel().addFreshEntity(entityzenpo);
+// 元のスポーン処理はここで止める
+event.setCanceled(true);
+}
+}
+}
+こんな感じですね
+2. 弾のテクスチャが「紫黒ブロック」になる問題
+EntityZenpo はプレイヤーに向かって白い毒の玉を投げてくる仕様にしたんですけど、テストプレイ中に「玉のテクスチャが
+読み込まれず、紫と黒の市松模様ブロックが飛んでくる」という問題が発生しました。(テストで赤点取るくらいの絶望ですこ
+れ)
+-解決策-
+原因はカスタムアイテムのモデル読み込みがクライアント側でうまく紐付いていなかったことなんですけど、1 からレンダラ
+ーを作り直すのも面倒なので、「バニラの雪玉の見た目をそのまま借りる(一番精○みたいだった)」という力技で解決しまし
+た。
+java
+// 描画されるアイテムを強制的にバニラの雪玉に偽装する
+@Override
+protected Item getDefaultItem() {
+return net.minecraft.world.item.Items.SNOWBALL;
+}
+コードはまあこれだけなんですけど、結果的に挙動も見た目もちゃんと安定したし大丈夫と
+3. 水の中にブロックが置けないバグの修正
+「Zen_Liquid」っていう精○を追加したけど、最初はただの液体の形をしたブロック状態になっていて、「中で泳げない」
+「液体の中にブロックを置こうとしても置けない」という嫌な性質でした。
+これを完全にバニラの水と同じ性質にするために、以下の 2 つの工夫を入れました。
+1. プロパティを水から完全コピー ブロックを登録する時に Properties.ofFullCopy(Blocks.WATER) を使って、バニラ
+の水と物理的な判定を全く同じにした。これでブロックを置いた時に水が消える（水源化する）ようになるんで
+す。
+2. 水タグ（Fluid Tags）への登録 マイクラって「この液体の中で泳げるか」とか「火が消えるか」をタグで判断して
+るので、json ファイルを作って、そこに今回の zen_liquid を登録しました。これで無事に泳げる精○完成です
+4. 金床を使ったレシピの実装
+この Mod の重要要素の一つでもある「修ぜん（Zen Mending）」というオリジナルエンチャント(ガチでぶっ壊れだと思いま
+す)。普通に作業台で作れると強すぎて面白くないので、金床を使った特殊な合成にしてみました。
+クラフトレシピの JSON ファイルだけでは金床の合成は作れないから、ここでも AnvilUpdateEvent というイベントハンドラ
+を使いました。
+何気にこういう合成ってバニラじゃ見ないかもね(普通はエンチャ本同士です)
+「左に修繕の本、右に Zenpo Soul を置いた時だけ、経験値を 20 レベル消費して修ぜんの本が完成する」という処理を直書き
+した。こういう訳のわからん要素をを実装できるのがコード書きのドーパミンえぐいところ。別にドパガキではないです勘違
+いしないでください
+5. 新規アイテム群 と採掘レベルの制限
+この Mod では、敵 MOB たちと戦うための新しい鉱石やアイテムも複数追加しました。
+• Zen Ore（ぜん鉱石）：地下に生成される新鉱石
+• Zen Ingot（ぜんインゴット）：鉱石をかまどで焼くと手に入る
+• Zenpo Head（ぜんぽの頭）：EntityZenpo を倒すと 1%でドロップする素材(ちなみにウィザスケの頭は 2.5%)
+• Zenpo Soul（ぜんぽの魂）：頭をかまどで焼くと手に入る
+• Erection Zen Ingot（起立したぜんインゴット）：ソウルとインゴット 8 個をクラフトして作る上位素材
+〜DeferredRegister（遅延登録）によるアイテム追加〜
+マイクラに新しいアイテムを追加する際、ただオブジェクトを作れば良いわけじゃなくてですね。「ゲームの読み込み中の正
+しいタイミング」でシステムに登録する必要があるんですよ。 だから NeoForge では、これを安全かつ簡単に行うため
+に DeferredRegister という仕組みを使います。
+実際の登録コードはこんな感じ
+java
+// 登録用システムの準備
+public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(ExampleMod.MODID);
+public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(ExampleMod.MODID);
+// ① 普通のアイテム(Zen Ingot とかの追加)
+public static final DeferredHolder<Item, Item> ZEN_INGOT = ITEMS.register("zen_ingot",
+key -> new Item(new Item.Properties().setId(ResourceKey.create(Registries.ITEM, key))));
+// ② ブロック（Zen Ore）の追加
+public static final DeferredHolder<Block, Block> ZEN_ORE = BLOCKS.register("zen_ore",
+key -> new Block(BlockBehaviour.Properties.of()
+.setId(ResourceKey.create(Registries.BLOCK, key))
+.strength(3.0F, 3.0F) // 石や鉄鉱石と同じくらいの硬さ (ぜんぽの方が硬いかも)
+.sound(SoundType.STONE)));
+// ③ ブロックをアイテム化する（手に持てるようにする）
+public static final DeferredHolder<Item, BlockItem> ZEN_ORE_ITEM = ITEMS.register("zen_ore",
+key -> new BlockItem(ZEN_ORE.get(), new Item.Properties().setId(ResourceKey.create(Registries.ITEM, key))));
+ブロック（Zen Ore）を追加する時は、「ワールドに設置するブロックのデータ」と「プレイヤーがインベントリで持つアイ
+テムのデータ（BlockItem）」の 2 種類を別々に登録する必要があるのが、マイクラのよくない仕様。
+採掘レベル（採掘ツール）の制限
+あと追加した Zen Ore は「ダイヤ以上のピッケルでしか掘れないという制限をかけた。(プレイヤーの人たち苦労してくださ
+い)
+NeoForge では、コードに直接条件を書くのではなく、データパック（JSON ファイル）を使って制御するんですよ。
+diamond_tool.json というファイルを作って、そこに自分の追加した zen_ore を登録するだけで、システム側が勝手に、これ
+はダイヤピッケル用だと認識してくれます。データ駆動の強さを感じたとこですね
+頭にかぶれる装備のコンポーネントのお話
+今回一番こだわったアイテムの一つが、EntityZenpo を倒すと 1% (ちょー低確率)でドロップする「Zenpo Head」。これはた
+だのブロックアイテムではなくてですね、カボチャやゾンビの頭のようにプレイヤーが頭に装備できるように設定しています
+java
+// プレイヤーが頭にかぶれるようにする設定
+public static final DeferredHolder<Item, BlockItem> ZENPO_HEAD_ITEM = ITEMS.register("zenpo_head",
+key -> new BlockItem(ZENPO_HEAD.get(), new Item.Properties()
+.setId(ResourceKey.create(Registries.ITEM, key))
+// DataComponents.EQUIPPABLE を付与して、装備スロットを「HEAD」に指定
+.component(DataComponents.EQUIPPABLE, Equippable.builder(EquipmentSlot.HEAD)
+.setAsset(ResourceKey.create(EquipmentAssets.ROOT_ID,
+Identifier.fromNamespaceAndPath(ExampleMod.MODID, "zenpo_head")))
+.build())));
+マイクラ（NeoForge）の仕様の DataComponent システムを活用して、アイテムのプロパティ
+に Equippable.builder(EquipmentSlot.HEAD) をくっつけることで、「このアイテムは頭スロットに装備可能」という属性を
+付与しています。
+〜Zen アーマーの追加について〜
+普通に防御力やタフネスの数値を上げるだけだと、落下ダメージとか防御力無視の攻撃を喰らったら死ぬ可能性があったんで
+すよ。 だから、「然ダメージを 95%カットする」っていう仕様を追加しました。
+NeoForge の LivingDamageEvent.Pre っていうダメージ計算される直前のタイミングを狙って、全身に Zen アーマーを着てた
+ら被ダメージを無理やり 0.05 倍に上書きする処理。
+java
+// ダメージを受ける直前の処理のやつ
+private void onLivingDamagePre(net.neoforged.neoforge.event.entity.living.LivingDamageEvent.Pre event) {
+// ダメージを受けたのがプレイヤーだった時
+if (event.getEntity() instanceof net.minecraft.world.entity.player.Player player) {
+// 4 箇所すべてに Zen アーマーを装備しているかチェックさせる
+boolean hasAll =
+player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).is(ModZenEquipment.ZEN_HELMET.get()) &&
+player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(ModZenEquipment.ZEN_CHESTPLATE.get()) &&
+player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS).is(ModZenEquipment.ZEN_LEGGINGS.get()) &&
+player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET).is(ModZenEquipment.ZEN_BOOTS.get());
+// 全部着てたら、受ける予定だったダメージを 0.05 倍（95%カット）に上書きする
+if (hasAll) {
+event.setNewDamage(event.getNewDamage() * 0.05F);
+}
+}
+}
+3. バニラの仕様変更と楽して進捗を作る方法(結局楽が一番です)
+防具を追加してテストしてみたら、修繕とかのエンチャントが一切つけられないっていうバグが発生しまして。 最近のマイク
+ラは、Java でエンチャント可能にするんじゃなくて、 minecraft:enchantable/durability とかの JSON ファイルにアイテムをい
+ちいち登録しないとエンチャントできなくなってました。めんどくさい。死んでください。
+でも逆に JSON さえ書けば、Java の難しいコード書かなくても色々できるってことなんで、これを利用しました。 Zen アーマ
+ーを一式装備したら進捗をクリアして、ついでにレベルを 67 にする処理もわざわざ Java で書かずに、JSON のクリア報酬で
+マイクラの経験値コマンドを直接呼び出すだけにした。一番楽ですね。
+json
+// 進捗クリア時に関数を呼ぶ
+"rewards": {
+"function": "zenpomod:advancements/cover_me_with_foreskin_reward"
+}
+mcfunction
+// 呼ばれる中身はたったのこれだけ。レベルを 67 にする (超簡単でしょ)
+experience set @s 67 levels
+6. ZEN アーマーの特殊効果
+起立したぜんインゴットを土台としたアイテム群の一つとして追加した Zen アーマーは、単純に防御力や耐久値（ノックバッ
+ク耐性など）をネザライト以上に設定するだけでなく、フルセットで装備するとマグマに入ってもダメージを受けず、耐久値
+も減らないという特殊効果を付与しています。
+最初は普通にマグマに入ると、炎ダメージはカットできても 0.05 ダメージを連続で受ける判定になり、ダメージチルトがえぐ
+いことなって防具の耐久値がすげー速度で削れる問題が発生しました。
+これを解決するために、PlayerTickEvent（毎ティック呼ばれるイベント）を利用して、頭・胸・脚・足のすべてに Zen Armor
+を装備している場合、プレイヤーに火炎耐性のエフェクトを付与し続けるという処理を書いて無効化しました (難しいことし
+たくないからこれが楽)
+java
+// プレイヤーがフルセット装備しているか毎ティック判定する処理
+@SubscribeEvent
+public void onPlayerTick(PlayerTickEvent.Post event) {
+if (event.getEntity() instanceof net.minecraft.world.entity.player.Player player) {
+// 全ての部位が Zen アーマーかチェック
+boolean hasHelmet = player.getItemBySlot(EquipmentSlot.HEAD).getItem() == ModContent.ZEN_HELMET.get();
+boolean hasChestplate = player.getItemBySlot(EquipmentSlot.CHEST).getItem() ==
+ModContent.ZEN_CHESTPLATE.get();
+boolean hasLeggings = player.getItemBySlot(EquipmentSlot.LEGS).getItem() ==
+ModContent.ZEN_LEGGINGS.get();
+boolean hasBoots = player.getItemBySlot(EquipmentSlot.FEET).getItem() == ModContent.ZEN_BOOTS.get();
+if (hasHelmet && hasChestplate && hasLeggings && hasBoots) {
+// 全身装備している時火炎耐性を付与し続ける処理
+player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE,
+10, 0, false, false, true
+));
+}
+}
+7. 作物「ぜんぽ」の栽培システム
+マイクラといえば農業（？）ということで、作物ぜんぽを育てられる機能も追加したんです。(テクスチャガチでグロい)
+• ぜんぽの種：通常のゼンビを倒すと 2.5%の確率でドロップ 。
+• 栽培：バニラの小麦などと同じように、クワで耕した土に植えられて、骨粉や時間経過で 8 段階（Age 0〜7）成
+長。
+• ぜんぽ（収穫物）：最大まで育てて破壊でドロップ。
+CropBlock とアイテムの連携
+作物の実装は一見簡単そうなんだけど、実際には「作物ブロック」「植えるための種」「収穫物」の 3 つを連携させる必要が
+あるんですよ。 さらに、最近から「アイテムの 3D モデルやテクスチャを読み込ませるための JSON ファイルの構造が変わっ
+たらしくて、models/item/ だけでなく items/ ディレクトリにも設定ファイルを置かないとテクスチャが読み込まれないとい
+う最新バージョン特有の仕様変更らしきものも無事に突破して実装しました
+ゾンビから種をドロップさせる処理も、バニラのルートテーブルを書き換えるのではなく、イベントを使って動的にアイテム
+をドロップさせています。
+java
+// ゾンビを倒した時に種を 2.5%でドロップさせる処理
+@SubscribeEvent
+public void onLivingDrops(LivingDropsEvent event) {
+// 倒されたエンティティがゾンビだったら
+if (event.getEntity().getType() == net.minecraft.world.entity.EntityType.ZOMBIE) {
+// 2.5%の確率で運試し
+if (event.getEntity().getRandom().nextFloat() < 0.025F) {
+// ドロップアイテムのリストに「ぜんぽの種」を追加
+event.getDrops().add(new net.minecraft.world.entity.item.ItemEntity(
+event.getEntity().level(),
+event.getEntity().getX(), event.getEntity().getY(), event.getEntity().getZ(),
+new net.minecraft.world.item.ItemStack(ModContent.ZENPO_SEED.get())
+));
+}
+}
+}
+あと、収穫した「ぜんぽ」と「火薬」をクラフトすると、新武器「ぜんぽ銃」が作れるレシピも追加しました。
+8. 「ゼザー」の体力 (2010 HP) の実装
+Minecraft のゲームエンジン（Attribute システム）には、Mob の最大体力の上限は 1024 までというハードキャップが存在し
+ています。
+ただ他の MOD を見る限り体力 60 万とか訳の分からない体力の MOB も追加されているので技術的には可能なのだろうけ
+ど、俺はよくわからん : ( だからこの MOD では以下の工夫で実質体力 2010 を実現しました。
+• 属性値の設定: Attributes.MAX_HEALTH 自体はマイクラの仕様に従い 1024.0 に設定。
+• ダメージのスケールダウン: NeoForge の LivingDamageEvent.Pre イベントをフックし、ゼザーが受けるあらゆるダ
+メージを計算式 (1024.0F / 2010.0F) で軽減。 これにより、UI 上の体力バーは 1024 を指すけど、削り切るために
+は実質 2010 のダメージが必要になるという擬似的な上限突破を行います。
+9. ドロップ上書き (ウィザーローズ → ぜんぽ)
+バニラのウィザーは、Mob を倒した際に強制的にウィザーローズをドロップするハードコードされた仕様を持っている。 ゼ
+ザーはウィザー (WitherBoss) を継承しているためこの処理が走りますが、独自ドロップへの変更は Entity クラス
+の killedEntity メソッドをオーバーライドすることで解決しました。
+java
+@Override
+public boolean killedEntity(ServerLevel level, LivingEntity killedEntity, DamageSource source) {
+boolean result = super.killedEntity(level, killedEntity, source);
+// ウィザーローズが設置された座標を取得して削除
+BlockPos pos = killedEntity.blockPosition();
+if (level.getBlockState(pos).is(Blocks.WITHER_ROSE)) {
+level.removeBlock(pos, false);
+killedEntity.spawnAtLocation(level, ModContent.ZENPO_CROP.get());
+} else {
+// アイテムとしてドロップした場合は周囲のエンティティを検索して書き換え
+List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class, killedEntity.getBoundingBox().inflate(2.0D));
+for (ItemEntity item : items) {
+if (item.getItem().is(Items.WITHER_ROSE)) {
+item.setItem(new ItemStack(ModContent.ZENPO_CROP.get()));
+}
+}
+}
+return result;
+}
+10. 修ぜんエンチャント (スニーク連打で耐久回復)
+バニラの修繕は経験値を消費するが、修ぜんエンチャントは**「プレイヤーがスニーク連打している間、自動で耐久が回復す
+るというぶっ壊れ仕様(経験値でも回復可能)。
+• PlayerTickEvent.Post を監視し、player.isCrouching() を判定。
+• 1 つ前の Tick でのスニーク状態を保持しておき、「スニークした瞬間（立ち状態→しゃがみ状態）」にのみ回復処
+理を回すことで、高速屈伸によるインタラクティブな回復体験を実現しています。
+11. ぜんぽの塊の自然生成
+球状の構造物「ぜんぽの塊」は、Feature クラスを継承した ZenpoBlobFeature によって動的に生成されます。
+• 乱数で中心点を決めた後、半径 2 マスの球形 (dx*dx + dy*dy + dz*dz <= 4) になるようにぜんぽブロックを配置。
+• 中心座標には強制的にチェスト (Blocks.CHEST) を配置し、スロットのインデックス 13（チェストのど真ん中）に
+直接「ぜんぽ銃」の ItemStack を格納しています。LootTable を使わず、コードベースでダイレクトに強力なアイ
+テムを配置しているのが特徴。
+12. 無重力弾道のぜんぽ銃
+ぜんぽ銃から発射される弾は、重力の影響を受けずにクロスヘアに向けて一直線に飛んでいきます。 これは射出直後
+に setNoGravity(true) を適用することで実現してます。 また、至近距離で Mob を撃つとクライアントとサーバーの同期ズレ
+により弾がすり抜ける問題が起こりやすいため、EntityType のビルド時に .clientTrackingRange(10).updateInterval(1) と設定
+し、毎 Tick 位置同期を強制することでヒット判定を極限まで安定させてます。
+13. フルアーマーによる「無敵時間」の不具合回避
+当初はぜん装備一式を着た際に、イベント制御で被ダメージを 0.05 倍にする処理を入れていました。 でも、これだとダメー
+ジ計算の結果が極小になりすぎて、マイクラ本来のダメージクールダウン（無敵時間）が正常に機能せず、連続でダメージ判
+定を受け続ける不具合が発生しました。 そこで無理にイベントでダメージ値を書き換えるのをやめ、フルセット時に
+PlayerTick イベントで耐性レベル 4 (被ダメージ 80%カット)の MobEffect を付与し続けるというバニラ仕様に則ったアプロー
+チに変更して、クールダウンのバグを完璧に解消しています。(こういうめんどいのは結局バニラの仕様をベースにした方が楽
+なんですよね)
+14. 新ディメンションの実装
+通常、新ディメンションのポータルを作る時って「ネザーポータルと同じようにブロックを並べて着火する」のが普通だけ
+ど、今回は独自の既存のネザーゲートの中にぜんぽを投入で起動という仕様にした。 また着火した瞬間、ポータルの周り（半
+径 4 ブロック以内）にある黒曜石が全部強制的にぜんぽブロックに侵食(?)されて置き換わるという少々強引な仕様にしまし
+た。
+〜どうやって実装したか〜
+BlockPos を基準に for 文で XYZ を-4〜4 まで回して、黒曜石を見つけ次第ぜんぽブロックに書き換えます
+java
+// 着火した地点の周りを探索して、黒曜石だったらぜんぽブロックにすり替える処理
+for (int dx = -4; dx <= 4; dx++) {
+for (int dy = -4; dy <= 4; dy++) {
+for (int dz = -4; dz <= 4; dz++) {
+BlockPos pos = startPos.offset(dx, dy, dz);
+// もし黒曜石を見つけたら
+if (level.getBlockState(pos).is(Blocks.OBSIDIAN)) {
+// ぜんぽブロックに置き換え
+level.setBlock(pos, ModContent.ZENPO_BLOCK.get().defaultBlockState(), 3);
+}
+}
+}
+}
+あと、プログラムから自動でポータルを生成する時、普通にポータルブロックを置こうとすると「隣が空気だからこれは不正
+なポータル」と判定されてブロックが勝手に自壊してしまって。 だから今回は、ブロックを置く時の更新フラグに「18（周り
+のブロックの更新を無視するなんかすごい数字）」を渡して、無理やりポータルを組み立てるという力技を使いました
+java
+// 2x3 のポータルの中身を生成する処理
+for (int dx = 0; dx <= 1; dx++) {
+for (int dy = 0; dy <= 2; dy++) {
+// 普通に置くと自壊するので、フラグ「18」を渡して周りの状況を無視して無理やり配置させる
+targetLevel.setBlock(targetPos.offset(dx, dy, 0), this.defaultBlockState().setValue(NetherPortalBlock.AXIS,
+Direction.Axis.X), 18);
+}
+}
+おまけで、ディメンション移動時はロード画面に入って音が強制的にかき消されちゃうから、サーバー側で音を鳴らすのを諦
+めて、クライアント側で直接 UI サウンドとしてテレポート音を再生するようにしました。
+15.マルチローダー対応
+Minecraft の MOD は、従来「特定のローダー専用」として作られるのが普通でした。
+• NeoForge（旧 Forge）：@Mod アノテーション、IEventBus、DeferredRegister など独自の API
+• Fabric：ModInitializer インターフェース、FabricLoader、Registry.register など別の API
+この 2 つは互いに全く互換性がなく、同じ処理を書くにも全く異なるコードが必要なので、 単純にコードを 2 倍書けば済む話
+ではなく、ゲームロジックとローダー固有の登録処理が混在した状態で管理するのは非常に困難なんです。
+採用したアーキテクチャ：Architectury API テンプレート
+Zenpomod では Architectury というマルチローダー向けの設計テンプレートを採用しました。 プロジェクトは以下の 3 つのモ
+ジュールに分割されています：
+Zenpomod-multiloader/
+├── common/ ← ゲームのロジックを全部ここに書く（これはどのローダーにも依存しない）
+├── neoforge/ ← NeoForge 固有の初期化コードのみ
+└── fabric/ ← Fabric 固有の初期化コードのみ
+この「共通」＋「ローダー固有の分離」が、マルチローダー対応の重要部分です。
+「登録処理」の抽象化：サービスインターフェース
+ブロックやアイテムを登録する処理は、ローダーによって書き方が全く異なります。
+• NeoForge: DeferredRegister に登録してから IEventBus に繋ぐ
+• Fabric: Registry.register(BuiltInRegistries.BLOCK, ...)で即時登録
+この差異を吸収するために、IRegistryHelper というインターフェースを定義しました。
+java
+// common モジュール
+public interface IRegistryHelper {
+<T extends Block> Supplier<T> registerBlock(String name, Supplier<T> block);
+<T extends Item> Supplier<T> registerItem(String name, Supplier<T> item);
+// ... その他の登録メソッド
+}
+このインターフェースを使って、共通モジュールのコードは「どう登録するか」を知らなくて OK になります。
+NeoForge 側の実装（NeoForgeRegistryHelper.java）
+java
+// neoforge モジュール
+public class NeoForgeRegistryHelper implements IRegistryHelper {
+public static final DeferredRegister.Blocks BLOCKS =
+DeferredRegister.createBlocks(Constants.MOD_ID);
+@Override
+public <T extends Block> Supplier<T> registerBlock(String name, Supplier<T> block) {
+return BLOCKS.register(name, block); // DeferredRegister に積む
+}
+}
+Fabric 側の実装（FabricRegistryHelper.java）
+java
+// fabric モジュール
+public class FabricRegistryHelper implements IRegistryHelper {
+@Override
+public <T extends Block> Supplier<T> registerBlock(String name, Supplier<T> block) {
+// BuiltInRegistries に即時登録
+T registered = Registry.register(BuiltInRegistries.BLOCK,
+Identifier.fromNamespaceAndPath(Constants.MOD_ID, name), block.get());
+return () -> registered;
+}
+}
+共通モジュールでの使い方（ModContent.java）
+java
+// common モジュール（ローダーを意識せず書けるとこ）
+public class ModContent {
+public static final Supplier<Block> ZEN_ORE =
+Services.REGISTRY.registerBlock("zen_ore", () ->
+new Block(BlockBehaviour.Properties.of()
+.setId(ResourceKey.create(Registries.BLOCK,
+Identifier.fromNamespaceAndPath(Constants.MOD_ID, "zen_ore")))));
+}
+Services.REGISTRY が実行時に NeoForge なのか Fabric なのかを自動判別し、対応する実装を返します。 これにより、ブロ
+ックやアイテムの定義は 1 度書くだけで両ローダーに対応できます。
+「イベント処理」の共通化：Mixin
+アイテムのドロップや特殊な処理（例：ゾンビを倒したときに Zenpo Seed が低確率で落ちる）は、従来 NeoForge 専用のイベ
+ントシステムで書かれていました：
+java
+// 旧来の NeoForge 専用コード
+@SubscribeEvent
+public void onLivingDrop(LivingDropsEvent event) {
+if (event.getEntity() instanceof Zombie) {
+event.getDrops().add(new ItemEntity(...));
+}
+}
+これを Fabric でも動かすには、Mixin（バイトコードレベルでバニラのコードに割り込む技術）を使います：
+java
+// common モジュール（NeoForge/Fabric 両対応）
+@Mixin(Zombie.class)
+public class ZombieDropMixin {
+@Inject(
+method = "getDefaultLoot",
+at = @At("RETURN"),
+cancellable = true
+)
+private void injectZenpoDrops(CallbackInfoReturnable<ResourceKey<LootTable>> cir) {
+// バニラのゾンビのルートテーブル取得処理に割り込んでドロップを追加
+}
+}
+Mixin はローダーに依存しないため、同じコードが NeoForge でも Fabric でもそのまま動くのが強みです。 Zenpomod では以
+下の処理をすべて Mixin 化しました：
+処理内容 Mixin 名
+ゾンビ・エンティティのドロップ追加 ZombieDropMixin
+金床の Zen Mending／アップグレード処理 AnvilMenuMixin
+プレイヤーTick（Zen Mending 自動修理） PlayerTickMixin
+エンティティ Tick（白い水ダメージなど） LivingEntityTickMixin
+ポータルブロック設置検出（Zether 召喚） ZenpoHeadBlock.setPlacedBy
+ローダー固有の要素の扱い
+すべてを共通化できるわけではないんですよね。
+Zen_liquid はその典型例です。
+• NeoForge: FluidType、BaseFlowingFluid、FluidTypeFluidExtension など独自クラスが必要
+• Fabric: FlowableFluid クラスを継承するなど、全く異なる API
+このような「どうしてもローダーごとに実装が変わる」要素は、正直に各モジュールに分けて実装しています。 無理に共通化
+しようとするより、リスクが低くメンテしやすいという判断です。
+ビルドの仕組み
+./gradlew build を実行すると、以下の 2 つの JAR が独立して生成されます：
+neoforge/build/libs/zenpomod-neoforge-26.1.2-1.3.0-beta.jar ← NeoForge 用
+fabric/build/libs/zenpomod-fabric-26.1.2-1.3.0-beta.jar ← Fabric 用
+どちらも同じゲームロジック（common モジュール）を内包しており、 プレイヤーはそれぞれ自分が使っているローダーに合
+った JAR を選べば OK です。
+16. ポータル周りの挙動修正（でかいゲートと破壊検知）
+初期の実装だと、通常の 4x5 以外の巨大なサイズのゲートを作った時にぜんぽブロックに正しく置き換えられなかったり、
+「枠を壊しても中のゲートがそのまま残る」という謎の亜空間ゲートが爆誕するバグがありました。
+これを直すために、neighborChanged という「隣のブロックが更新されたら呼ばれる処理」をオーバーライドしました。これ
+によって、ポータルの隣接ブロックが空気になったら自分自身を破壊する、というバニラと同じ自壊仕様を実装しました。
+17. ディメンション移動時の問題修正（奈落ダイブと空中スポーンの阻止）
+元の仕様だと、でかいポータルから帰還した時に空中にスポーンして落下ダメージを受けたり、ネザーからディメンションぜ
+んぽに行くと座標がそのまま引き継がれてとんでもない位置に出たりしてました。しかもディメンションぜんぽには岩盤がな
+かったので、下に掘り進めると容赦なく奈落に落ちるという絶望仕様でした。
+• 岩盤の追加: noise_settings の JSON ファイルをいじって、Y=-64 の底に岩盤を配置しました。これで奈落は回避
+できます。
+• 着地点の補正: ポータルから出る時、ポータルの枠の足元のブロックを Y 軸の上から下に向かってスキャンして探
+し出し、そこにプレイヤーをテレポートさせるように修正しました。
+• ワープの演出: サバイバルでもゲートに触れた瞬間に即ワープしてしまっていたので、getPortalWaitTime() の数値
+をいじって、バニラのネザーゲートのように視界が歪んでからワープする演出と待機時間を追加しました。やっぱ
+ポータルはこれがないとね。
+18. ZETHER のドロップ品の置き換え
+Zether はバニラの WitherBoss を継承して作っているので、元々のウィザーの性質を色々と引き継いじゃってます。そのせい
+で、「MOB を倒すとウィザーローズがドロップする」「死んだらネザースターをドロップする」という仕様が残ってまし
+た。
+• ウィザーローズをぜんぽ（作物）にすり替える: ウィザーローズのドロップ処理自体を消すのは骨が折れるので、
+Zether 自身の tick() 処理の中で「周囲 64 ブロック以内に落ちているウィザーローズのアイテムを検知したら、ぜ
+んぽのアイテムに書き換える」という力技を使いました。
+• ネザースターの抹消と Zenpo Head の大量ドロップ: ネザースターもハードコードされているので、Zether が死ん
+でエンティティが削除される remove() のタイミングで、周囲にドロップしたネザースターを消滅させています。そ
+して代わりに Zenpo Head を 10 個ドロップ。
+java
+@Override
+public void remove(Entity.RemovalReason reason) {
+if (reason == Entity.RemovalReason.KILLED && !this.level().isClientSide) {
+// ネザースターを削除
+AABB aabb = this.getBoundingBox().inflate(5.0);
+List<ItemEntity> items = this.level().getEntitiesOfClass(ItemEntity.class, aabb);
+for (ItemEntity item : items) {
+if (item.getItem().is(Items.NETHER_STAR)) {
+item.discard();
+}
+}
+// 代わりにぜんぽの頭を 10 個ばら撒く
+for (int i = 0; i < 10; i++) {
+this.spawnAtLocation(new ItemStack(ModContent.ZENPO_HEAD_ITEM.get()));
+}
+}
+super.remove(reason);
+}
+19. 進捗ツリーの構築と罠
+「ZenpoMOD」という大元（Root）の進捗を追加し、そこから「ディメンション攻略ルート」と「最強装備ルート」の２つに
+綺麗に分岐するツリーを作りました。
+進捗の JSON ファイルでタイトルを日本語化（「私を包皮で覆って」とか「膀胱に暴行」とか）したんですが、ここで一つト
+ラップがありました。 進捗タブの背景を「Zen Liquid（白濁液）」にしようとしたら、見事に紫と黒のチェック柄（テクスチ
+ャ欠損）になりました。
+原因は、マイクラの進捗画面の背景にはアニメーションするテクスチャ（.mcmeta が付いているもの）が使えないという仕様
+です。液体はうねうね動くテクスチャなのでアウトだったわけですね。 最終的に、背景は静的なブロックであ
+る zenpo_block のテクスチャを指定することで無事に解決しました。進捗の背景はアニメーション不可、これテストに出るか
+もです。
+20. マグマ用 ボートの実装
+通常バニラのボートはマグマの上には浮けず、置くと燃え尽きてしまいます。「マグマの上を渡れるボート」を作ろうとした
+んですが、これがかなりの曲者でした。
+最初は手抜きして AbstractBoat に Mixin で無理やり浮力を足そうとしたんですが、マイクラのコアシステムが見事にクラッ
+シュ（継承の深いクラスの Mixin は闇が深いです）。 なので、自前で ZenpoBoatEntity クラスを作って tick() を完全オーバ
+ーライドすることにしました。
+• 浮力の実装: マグマの中にいる時、バネの係数（Spring factor）と減衰係数（Damping factor）を独自に計算して、
+ボートを滑らかに上に押し上げる処理を書きました。これで沈まずにマグマをスイスイ進めるようになります。
+• 炎エフェクトの削除: ボートに乗っている間は燃えないように、ボート側の tick() で passenger.clearFire() を呼ん
+で消火するようにしたんですが、なぜかプレイヤーの画面上では体がずっと燃え続けてるんです。 原因は、ボート
+の tick の直後にプレイヤー自身の tick が走り、そこで「マグマに触れてる」と認識して即座に炎上状態を上書き
+していたせいでした。 これを解決するために、最終的に PlayerTickMixin を使って、プレイヤーの tick() 処理の一
+番最後（@At("TAIL")）でボートに乗ってたら強制的に clearFire() する」という処理をねじ込みました。これで視
+覚的な炎エフェクトも消すことに成功しました。
+java
+// プレイヤーの Tick 処理の最後に割り込んで炎を消す
+@Inject(method = "tick", at = @At("TAIL"))
+private void zenpomod$onPlayerTick(CallbackInfo ci) {
+Player player = (Player) (Object) this;
+// ぜんボートかチェスト付きぜんボートに乗っていたら消火
+if (player.getVehicle() instanceof ZenpoBoatEntity ||
+player.getVehicle() instanceof ZenpoChestBoatEntity) {
+player.clearFire();
+}
+}
+21. データ駆動による新ディメンションの追加
+昔のマイクラだと、新しいディメンション（異世界）を追加するには Java のコードをゴリゴリ書いてワールドジェネレータ
+ーやバイオームを登録するのが普通でしたが、最近のマイクラは完全なデータ駆動に移行しているみたいです。 要は Java コ
+ードを 1 行も書かずに、JSON ファイルを配置するだけで新ディメンションが作れるようになっているんです。
+• JSON ファイル: コードを書かなくていいのは楽なんですけど、その代わり dimension_type（ディメンションの明る
+さや天井の高さ）、dimension（チャンク生成器の指定）、biome（バイオームの空の色やスポーンモブ）、
+noise_settings（地形の起伏や岩盤の生成）といった複数の JSON ファイルを相互にリンクさせるパズルゲーのよう
+な仕様になってます。1 箇所でも記述やパスを間違えると読み込まれずに虚無になります。
+• マルチローダー環境での恩恵: ただ、この JSON によるデータ駆動のおかげで、NeoForge か Fabric かといった
+ローダーごとの API の差異を全く気にする必要がなく、データパックとして JSON をぶち込むだけで、両ローダ
+ー対応の完全なオリジナルディメンションが一発で作れました。
+まとめ
+以上、Zenpomod の開発で詰まった部分とこだわった部分を書いてみました
+改めて数えてみると 21 個も項目があって、自分でもそんなにあったんかってなりました。
+ゾンビの湧きを乗っ取ったり、ポータルを力技で組み立てたり、ボートに浮力を独自実装したり、どれも最初からこうすれば
+いいって分かってたわけじゃなくて、大体は「動かしてみたらバグった→原因調べる→直す」の繰り返しです。
+特に無敵時間のバグとか Mixin でボートがクラッシュした話とか、あの瞬間は普通にキレそうになりましたが、後から振り返
+るとバニラの仕様に逆らわず乗っかった方が結局安定するっていう一番大事な学びに繋がってた気がします。
+ゴリ押しで解決した部分ほど、後で別のバグの元になりやすいっていうのも今回よく分かりました。
+マルチローダー対応は正直かなり大変でしたが、共通化できる部分とできない部分の見極めができるようになったのは大きい
+収穫でした。データ駆動のディメンション実装なんかは、JSON だけでローダーの違いを気にせず済んだので逆に「無理に自
+分でコード書かなくていいところは書かない」のも大事な判断だなと実感しました。
+正直まだ直したい部分とか追加したい要素は山ほどあるので、Zenpomod の開発はもうちょっと続けます多分ね。
+ここまで読んでくれた人、ありがとうございました。
